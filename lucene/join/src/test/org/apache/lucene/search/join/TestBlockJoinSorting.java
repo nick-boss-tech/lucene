@@ -624,7 +624,8 @@ public class TestBlockJoinSorting extends LuceneTestCase {
                 .utf8ToString());
         TopFieldDocs firstPage = searcher.search(query, 1, new Sort(sortField));
         TopFieldDocs secondPage =
-            searcher.searchAfter((FieldDoc) firstPage.scoreDocs[0], query, 1, new Sort(sortField));
+            searcher.searchAfter(
+                (FieldDoc) firstPage.scoreDocs[0], query, 1, new Sort(sortField), false);
         assertEquals(1, secondPage.scoreDocs.length);
         assertEquals(topDocs.scoreDocs[1].doc, secondPage.scoreDocs[0].doc);
       }
