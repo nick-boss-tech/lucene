@@ -23,6 +23,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedDocValuesField;
+import org.apache.lucene.document.SortedNumericDocValuesField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.Term;
@@ -621,6 +622,11 @@ public class TestBlockJoinSorting extends LuceneTestCase {
             "40",
             ((BytesRef) ((FieldDoc) topDocs.scoreDocs[missingFirst ? 1 : 0]).fields[0])
                 .utf8ToString());
+        TopFieldDocs firstPage = searcher.search(query, 1, new Sort(sortField));
+        TopFieldDocs secondPage =
+            searcher.searchAfter((FieldDoc) firstPage.scoreDocs[0], query, 1, new Sort(sortField));
+        assertEquals(1, secondPage.scoreDocs.length);
+        assertEquals(topDocs.scoreDocs[1].doc, secondPage.scoreDocs[0].doc);
       }
     }
 
@@ -640,7 +646,8 @@ public class TestBlockJoinSorting extends LuceneTestCase {
         List<Document> block = new ArrayList<>();
         Document child = new Document();
         child.add(new StringField("child", "true", Field.Store.NO));
-        child.add(new NumericDocValuesField("sort_val", 30 - 10 * parent));
+        child.add(new SortedNumericDocValuesField("sort_val", 30 - 10 * parent));
+        child.add(new SortedNumericDocValuesField("sort_val", 60 - 10 * parent));
         block.add(child);
         if (parent != 1) {
           Document missing = new Document();
@@ -661,17 +668,27 @@ public class TestBlockJoinSorting extends LuceneTestCase {
         ToParentBlockJoinQuery query =
             new ToParentBlockJoinQuery(childQuery, parents, ScoreMode.None);
         for (boolean reverse : new boolean[] {false, true}) {
-          int missingValue = reverse ? 50 : 5;
-          SortField sort =
-              new ToParentBlockJoinSortField(
-                  "sort_val", SortField.Type.INT, reverse, null, missingValue, parents, children);
-          TopFieldDocs hits = searcher.search(query, 10, new Sort(sort));
-          assertEquals(3, hits.totalHits.value());
-          assertEquals(3, hits.scoreDocs.length);
-          assertEquals(7, hits.scoreDocs[0].doc);
-          assertEquals(missingValue, (int) ((FieldDoc) hits.scoreDocs[0]).fields[0]);
-          assertEquals(reverse ? 2 : 4, hits.scoreDocs[1].doc);
-          assertEquals(reverse ? 4 : 2, hits.scoreDocs[2].doc);
+          for (Integer missingValue : new Integer[] {null, reverse ? 100 : 5}) {
+            SortField sort =
+                new ToParentBlockJoinSortField(
+                    "sort_val", SortField.Type.INT, reverse, null, missingValue, parents, children);
+            TopFieldDocs hits = searcher.search(query, 10, new Sort(sort));
+            assertEquals(3, hits.totalHits.value());
+            assertEquals(3, hits.scoreDocs.length);
+            int[] expectedDocs;
+            if (reverse && missingValue == null) {
+              expectedDocs = new int[] {2, 4, 7};
+            } else if (reverse) {
+              expectedDocs = new int[] {7, 2, 4};
+            } else {
+              expectedDocs = new int[] {7, 4, 2};
+            }
+            for (int i = 0; i < expectedDocs.length; i++) {
+              assertEquals(expectedDocs[i], hits.scoreDocs[i].doc);
+            }
+            int expectedValue = missingValue == null ? (reverse ? 60 : 10) : missingValue;
+            assertEquals(expectedValue, (int) ((FieldDoc) hits.scoreDocs[0]).fields[0]);
+          }
         }
       }
     }
