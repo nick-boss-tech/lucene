@@ -174,9 +174,9 @@ public class TestBlockJoinSelector extends LuceneTestCase {
             toIter(children),
             false);
     assertEquals(5, nextDoc(withMissingValues, 5));
-    assertEquals(-1, withMissingValues.ordValue());
+    assertEquals(3, withMissingValues.ordValue());
     assertEquals(15, nextDoc(withMissingValues, 15));
-    assertEquals(-1, withMissingValues.ordValue());
+    assertEquals(10, withMissingValues.ordValue());
     assertEquals(18, nextDoc(withMissingValues, 18));
     assertEquals(9, withMissingValues.ordValue());
     assertNoMoreDoc(withMissingValues, 20);
@@ -219,9 +219,9 @@ public class TestBlockJoinSelector extends LuceneTestCase {
             toIter(children),
             true);
     assertEquals(5, nextDoc(withMissingValues, 5));
-    assertEquals(Integer.MAX_VALUE, withMissingValues.ordValue());
+    assertEquals(7, withMissingValues.ordValue());
     assertEquals(15, nextDoc(withMissingValues, 15));
-    assertEquals(Integer.MAX_VALUE, withMissingValues.ordValue());
+    assertEquals(10, withMissingValues.ordValue());
     assertEquals(18, nextDoc(withMissingValues, 18));
     assertEquals(10, withMissingValues.ordValue());
     assertNoMoreDoc(withMissingValues, 20);
@@ -259,12 +259,8 @@ public class TestBlockJoinSelector extends LuceneTestCase {
             parents,
             toIter(children),
             false);
-    assertEquals(3, naturalOrder.nextDoc());
-    assertEquals(-1, naturalOrder.ordValue());
     assertEquals(5, naturalOrder.nextDoc());
     assertEquals(7, naturalOrder.ordValue());
-    assertEquals(10, naturalOrder.nextDoc());
-    assertEquals(-1, naturalOrder.ordValue());
     assertEquals(NO_MORE_DOCS, naturalOrder.nextDoc());
 
     final SortedDocValues reverseOrder =
@@ -274,13 +270,103 @@ public class TestBlockJoinSelector extends LuceneTestCase {
             parents,
             toIter(children),
             true);
-    assertEquals(3, reverseOrder.nextDoc());
-    assertEquals(Integer.MAX_VALUE, reverseOrder.ordValue());
     assertEquals(5, reverseOrder.nextDoc());
     assertEquals(7, reverseOrder.ordValue());
-    assertEquals(10, reverseOrder.nextDoc());
-    assertEquals(Integer.MAX_VALUE, reverseOrder.ordValue());
     assertEquals(NO_MORE_DOCS, reverseOrder.nextDoc());
+  }
+
+  public void testSortedMissingValuesAreAbsent() throws IOException {
+    final BitSet parents = new FixedBitSet(10);
+    for (int parent : new int[] {3, 5, 8, 9}) {
+      parents.set(parent);
+    }
+    final BitSet children = new FixedBitSet(10);
+    for (int child : new int[] {0, 1, 4, 6}) {
+      children.set(child);
+    }
+    final int[] ords = new int[10];
+    Arrays.fill(ords, -1);
+    ords[0] = 1;
+    ords[4] = 2;
+    for (BlockJoinSelector.Type selection : BlockJoinSelector.Type.values()) {
+      boolean missingLast = selection == BlockJoinSelector.Type.MAX;
+      for (int access = 0; access < 3; access++) {
+        SortedDocValues values =
+            BlockJoinSelector.wrap(
+                new CannedSortedDocValues(ords), selection, parents, toIter(children), missingLast);
+        if (access == 0) {
+          assertEquals(5, values.nextDoc());
+        } else if (access == 1) {
+          assertEquals(5, values.advance(1));
+        } else {
+          assertFalse(values.advanceExact(3));
+          assertEquals(3, values.docID());
+          assertFalse(values.advanceExact(3));
+          assertFalse(values.advanceExact(4));
+          assertTrue(values.advanceExact(5));
+          assertTrue(values.advanceExact(5));
+        }
+        assertEquals(2, values.ordValue());
+        assertTrue(values.ordValue() < values.getValueCount());
+        assertFalse(values.advanceExact(8));
+        assertFalse(values.advanceExact(9));
+        assertEquals(NO_MORE_DOCS, values.nextDoc());
+      }
+    }
+  }
+
+  public void testNumericMissingValuesRespectChildFilter() throws IOException {
+    final BitSet parents = new FixedBitSet(12);
+    for (int parent : new int[] {3, 7, 10, 11}) {
+      parents.set(parent);
+    }
+    final BitSet children = new FixedBitSet(12);
+    for (int child : new int[] {0, 4, 5, 8}) {
+      children.set(child);
+    }
+    final BitSet docsWithValue = new FixedBitSet(12);
+    final long[] longs = new long[12];
+    for (int doc : new int[] {0, 2, 4, 6, 9}) {
+      docsWithValue.set(doc);
+      longs[doc] = 99;
+    }
+    longs[0] = 7;
+    longs[4] = 11;
+    for (BlockJoinSelector.Type selection : BlockJoinSelector.Type.values()) {
+      long missingValue = selection == BlockJoinSelector.Type.MIN ? -5 : 20;
+      for (int access = 0; access < 3; access++) {
+        NumericDocValues values =
+            BlockJoinSelector.wrap(
+                new CannedNumericDocValues(longs, docsWithValue),
+                selection,
+                parents,
+                toIter(children),
+                missingValue);
+        if (access == 0) {
+          assertEquals(3, values.nextDoc());
+        } else if (access == 1) {
+          assertEquals(3, values.advance(1));
+        } else {
+          assertFalse(values.advanceExact(1));
+          assertEquals(3, values.nextDoc());
+          assertTrue(values.advanceExact(3));
+        }
+        assertEquals(7, values.longValue());
+        if (access == 0) {
+          assertEquals(7, values.nextDoc());
+        } else if (access == 1) {
+          assertEquals(7, values.advance(4));
+        } else {
+          assertFalse(values.advanceExact(6));
+          assertTrue(values.advanceExact(7));
+          assertTrue(values.advanceExact(7));
+        }
+        assertEquals(missingValue, values.longValue());
+        assertFalse(values.advanceExact(10));
+        assertFalse(values.advanceExact(11));
+        assertEquals(NO_MORE_DOCS, values.nextDoc());
+      }
+    }
   }
 
   private static class CannedSortedDocValues extends SortedDocValues {
