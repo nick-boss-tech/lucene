@@ -56,6 +56,40 @@ import org.apache.lucene.tests.util.LuceneTestCase;
  */
 public class TestSort extends LuceneTestCase {
 
+  public void testInverseRetainsOverriddenComparator() throws IOException {
+    try (Directory dir = newDirectory();
+        RandomIndexWriter writer = new RandomIndexWriter(random(), dir)) {
+      Document first = new Document();
+      first.add(new StringField("id", "A", Field.Store.YES));
+      first.add(new NumericDocValuesField("nominal", 1));
+      first.add(new NumericDocValuesField("actual", 20));
+      writer.addDocument(first);
+      Document second = new Document();
+      second.add(new StringField("id", "B", Field.Store.YES));
+      second.add(new NumericDocValuesField("nominal", 2));
+      second.add(new NumericDocValuesField("actual", 10));
+      writer.addDocument(second);
+
+      try (IndexReader reader = writer.getReader()) {
+        IndexSearcher searcher = newSearcher(reader);
+        SortField custom =
+            new SortField("nominal", SortField.Type.LONG) {
+              @Override
+              public FieldComparator<?> getComparator(int numHits, Pruning pruning) {
+                return new SortField("actual", SortField.Type.LONG).getComparator(numHits, pruning);
+              }
+            };
+        Sort sort = new Sort(custom);
+        TopFieldDocs forward = searcher.search(new MatchAllDocsQuery(), 10, sort);
+        assertEquals("B", searcher.storedFields().document(forward.scoreDocs[0].doc).get("id"));
+        assertEquals("A", searcher.storedFields().document(forward.scoreDocs[1].doc).get("id"));
+        TopFieldDocs inverse = searcher.search(new MatchAllDocsQuery(), 10, sort.inverse());
+        assertEquals("A", searcher.storedFields().document(inverse.scoreDocs[0].doc).get("id"));
+        assertEquals("B", searcher.storedFields().document(inverse.scoreDocs[1].doc).get("id"));
+      }
+    }
+  }
+
   private void assertEquals(Sort a, Sort b) {
     LuceneTestCase.assertEquals(a, b);
     LuceneTestCase.assertEquals(b, a);
